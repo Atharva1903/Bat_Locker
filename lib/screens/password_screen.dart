@@ -1,13 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import '../db/database_helper.dart';
 import '../models/password_entry.dart';
-import '../widgets/image_picker_widget.dart';
 import '../utils/encryption_helper.dart';
+import '../utils/theme.dart';
+import '../utils/responsive.dart';
 
 class PasswordScreen extends StatefulWidget {
   final int categoryId;
   final String categoryName;
-  const PasswordScreen({Key? key, required this.categoryId, required this.categoryName}) : super(key: key);
+  const PasswordScreen({super.key, required this.categoryId, required this.categoryName});
 
   @override
   State<PasswordScreen> createState() => _PasswordScreenState();
@@ -40,40 +42,38 @@ class _PasswordScreenState extends State<PasswordScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: Colors.black,
-        title: Text(entry == null ? 'Add Password' : 'Edit Password', style: const TextStyle(color: Colors.red)),
+        backgroundColor: kColorTertiary,
+        title: Text(
+          entry == null ? 'Add Password' : 'Edit Password',
+          style: GoogleFonts.anton(color: kColorPrimary, fontSize: context.sp(22), letterSpacing: 1),
+        ),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
                 controller: titleController,
-                decoration: const InputDecoration(labelText: 'Title', labelStyle: TextStyle(color: Colors.white70)),
-                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(labelText: 'Title'),
+                style: GoogleFonts.jetBrainsMono(color: Colors.white, fontSize: context.sp(14)),
               ),
               const SizedBox(height: 8),
               TextField(
                 controller: usernameController,
-                decoration: const InputDecoration(labelText: 'Username/Email', labelStyle: TextStyle(color: Colors.white70)),
-                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(labelText: 'Username/Email'),
+                style: GoogleFonts.jetBrainsMono(color: Colors.white, fontSize: context.sp(14)),
               ),
               const SizedBox(height: 8),
               TextField(
                 controller: passwordController,
                 obscureText: true,
-                decoration: const InputDecoration(labelText: 'Password', labelStyle: TextStyle(color: Colors.white70)),
-                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(labelText: 'Password'),
+                style: GoogleFonts.jetBrainsMono(color: Colors.white, fontSize: context.sp(14)),
               ),
               const SizedBox(height: 8),
               TextField(
                 controller: notesController,
-                decoration: const InputDecoration(labelText: 'Notes', labelStyle: TextStyle(color: Colors.white70)),
-                style: const TextStyle(color: Colors.white),
-              ),
-              const SizedBox(height: 8),
-              ImagePickerWidget(
-                initialImagePath: imagePath,
-                onImageSelected: (path) => imagePath = path,
+                decoration: const InputDecoration(labelText: 'Notes'),
+                style: GoogleFonts.jetBrainsMono(color: Colors.white, fontSize: context.sp(14)),
               ),
             ],
           ),
@@ -81,10 +81,9 @@ class _PasswordScreenState extends State<PasswordScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
+            child: Text('Cancel', style: TextStyle(fontSize: context.sp(13))),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () async {
               if (titleController.text.isEmpty || usernameController.text.isEmpty || passwordController.text.isEmpty) return;
               if (entry == null) {
@@ -111,10 +110,12 @@ class _PasswordScreenState extends State<PasswordScreen> {
                   ),
                 );
               }
-              Navigator.pop(context);
+              if (context.mounted) {
+                Navigator.pop(context);
+              }
               _loadEntries();
             },
-            child: Text(entry == null ? 'Add' : 'Update'),
+            child: Text(entry == null ? 'Add' : 'Update', style: TextStyle(fontSize: context.sp(13))),
           ),
         ],
       ),
@@ -129,44 +130,58 @@ class _PasswordScreenState extends State<PasswordScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black,
       appBar: AppBar(
-        title: Text(widget.categoryName),
-        backgroundColor: Colors.red[900],
+        title: const Text('BATLOCKER'),
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator(color: Colors.red))
+          ? const Center(child: CircularProgressIndicator(color: kColorPrimary))
           : ListView.builder(
               itemCount: _entries.length,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               itemBuilder: (context, index) {
                 final entry = _entries[index];
-                return ListTile(
-                  leading: entry.imagePath != null
-                      ? Image.asset(entry.imagePath!, width: 40, height: 40, fit: BoxFit.cover)
-                      : const Icon(Icons.vpn_key, color: Colors.red),
-                  title: Text(entry.title, style: const TextStyle(color: Colors.white)),
-                  subtitle: Text(entry.username, style: const TextStyle(color: Colors.white70)),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.edit, color: Colors.white70),
-                        onPressed: () => _showPasswordDialog(entry: entry),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.delete, color: Colors.redAccent),
-                        onPressed: () => _deleteEntry(entry.id!),
-                      ),
-                    ],
+                return Card(
+                  margin: const EdgeInsets.symmetric(vertical: 8),
+                  child: ListTile(
+                    leading: entry.imagePath != null
+                        ? Image.asset(entry.imagePath!, width: 40, height: 40, fit: BoxFit.cover)
+                        : const Icon(Icons.vpn_key, color: kColorSecondary),
+                    title: Text(
+                      entry.title,
+                      style: GoogleFonts.jetBrainsMono(color: Colors.white, fontSize: context.sp(15), fontWeight: FontWeight.bold),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle: Text(
+                      entry.username,
+                      style: GoogleFonts.jetBrainsMono(color: kColorNeutral, fontSize: context.sp(12)),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.edit, color: kColorNeutral),
+                          onPressed: () => _showPasswordDialog(entry: entry),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.delete, color: kColorPrimary),
+                          onPressed: () => _deleteEntry(entry.id!),
+                        ),
+                      ],
+                    ),
                   ),
                 );
               },
             ),
       floatingActionButton: FloatingActionButton(
-        backgroundColor: Colors.red,
+        backgroundColor: kColorSecondary,
+        foregroundColor: Colors.black,
+        shape: const CircleBorder(),
         onPressed: () => _showPasswordDialog(),
         child: const Icon(Icons.add),
       ),
     );
   }
-} 
+}

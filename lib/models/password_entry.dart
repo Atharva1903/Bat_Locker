@@ -6,6 +6,7 @@ class PasswordEntry {
   final String password;
   final String? notes;
   final String? imagePath;
+  final bool isFavorite;
 
   PasswordEntry({
     this.id,
@@ -15,7 +16,30 @@ class PasswordEntry {
     required this.password,
     this.notes,
     this.imagePath,
+    this.isFavorite = false,
   });
+
+  PasswordEntry copyWith({
+    int? id,
+    int? categoryId,
+    String? title,
+    String? username,
+    String? password,
+    String? notes,
+    String? imagePath,
+    bool? isFavorite,
+  }) {
+    return PasswordEntry(
+      id: id ?? this.id,
+      categoryId: categoryId ?? this.categoryId,
+      title: title ?? this.title,
+      username: username ?? this.username,
+      password: password ?? this.password,
+      notes: notes ?? this.notes,
+      imagePath: imagePath ?? this.imagePath,
+      isFavorite: isFavorite ?? this.isFavorite,
+    );
+  }
 
   Map<String, dynamic> toMap() {
     return {
@@ -26,6 +50,7 @@ class PasswordEntry {
       'password': password,
       'notes': notes,
       'image_path': imagePath,
+      'is_favorite': isFavorite ? 1 : 0,
     };
   }
 
@@ -38,6 +63,7 @@ class PasswordEntry {
       password: map['password'] as String,
       notes: map['notes'] as String?,
       imagePath: map['image_path'] as String?,
+      isFavorite: (map['is_favorite'] as int? ?? 0) == 1,
     );
   }
 } 
