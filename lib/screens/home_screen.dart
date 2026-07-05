@@ -2817,14 +2817,14 @@ class _HomeScreenState extends State<HomeScreen> {
           downloadsPath = "${home.replaceAll('\\', '/')}/Downloads";
         }
       } else if (Platform.isAndroid) {
-        final Directory androidDir = Directory('/storage/emulated/0/Download');
-        if (await androidDir.exists()) {
-          downloadsPath = androidDir.path;
+        final Directory? extDir = await getExternalStorageDirectory();
+        if (extDir != null) {
+          downloadsPath = extDir.path;
         }
       }
 
       if (downloadsPath == null) {
-        final Directory appDocDir = await getExternalStorageDirectory() ?? await getApplicationDocumentsDirectory();
+        final Directory appDocDir = await getApplicationDocumentsDirectory();
         downloadsPath = appDocDir.path;
       }
 

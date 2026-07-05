@@ -98,9 +98,9 @@ Depending on the platform the app is running on, files are stored in the followi
 | OS Platform | Storage Type | Default System Path |
 | :--- | :--- | :--- |
 | **Android** | SQLite DB (`sqflite`) | `/data/data/com.example.bat_locker/databases/batlocker.db` |
-| | Exports | `/storage/emulated/0/Download/batlocker_passwords_backup.pdf` |
+| | Exports | App-specific external storage: `Android/data/com.example.bat_locker/files/batlocker_passwords_backup.pdf` |
 | **iOS** | SQLite DB (`sqflite`) | `/var/mobile/Containers/Data/Application/<App_UUID>/Library/LocalDatabase/batlocker.db` |
-| | Exports | Sandboxed Document Directory / Downloads folder. |
+| | Exports | Sandboxed Documents Directory: `batlocker_passwords_backup.pdf` |
 
 ### 3. Database Schema Layout
 
