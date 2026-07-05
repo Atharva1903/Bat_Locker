@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:pdf/pdf.dart';
@@ -13,6 +12,10 @@ import '../models/password_entry.dart';
 import '../models/note.dart';
 import '../utils/theme.dart';
 import '../utils/responsive.dart';
+import '../utils/encryption_helper.dart';
+import '../widgets/grid_background_painter.dart';
+import '../widgets/password_entry_card.dart';
+import 'category_detail_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -57,15 +60,39 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _loadNotes() async {
     final notes = await DatabaseHelper().getNotes();
+    final decryptedNotes = <Note>[];
+    for (final note in notes) {
+      final decryptedTitle = await EncryptionHelper.decryptText(note.title);
+      final decryptedContent = await EncryptionHelper.decryptText(note.content);
+      decryptedNotes.add(Note(
+        id: note.id,
+        title: decryptedTitle.isEmpty ? note.title : decryptedTitle,
+        content: decryptedContent.isEmpty ? note.content : decryptedContent,
+        createdAt: note.createdAt,
+      ));
+    }
     setState(() {
-      _notes = notes;
+      _notes = decryptedNotes;
     });
   }
 
   Future<void> _loadFavorites() async {
     final favorites = await DatabaseHelper().getFavoritePasswords();
+    final decryptedFavorites = <PasswordEntry>[];
+    for (final entry in favorites) {
+      final decryptedTitle = await EncryptionHelper.decryptText(entry.title);
+      final decryptedUsername = await EncryptionHelper.decryptText(entry.username);
+      final decryptedPassword = await EncryptionHelper.decryptText(entry.password);
+      final decryptedNotes = await EncryptionHelper.decryptText(entry.notes ?? '');
+      decryptedFavorites.add(entry.copyWith(
+        title: decryptedTitle.isEmpty ? entry.title : decryptedTitle,
+        username: decryptedUsername.isEmpty ? entry.username : decryptedUsername,
+        password: decryptedPassword.isEmpty ? entry.password : decryptedPassword,
+        notes: decryptedNotes,
+      ));
+    }
     setState(() {
-      _favoriteEntries = favorites;
+      _favoriteEntries = decryptedFavorites;
     });
   }
 
@@ -1221,11 +1248,15 @@ class _HomeScreenState extends State<HomeScreen> {
                                 passwordController.text.isEmpty) {
                               return;
                             }
+                            final encryptedTitle = await EncryptionHelper.encryptText(titleController.text);
+                            final encryptedUsername = await EncryptionHelper.encryptText(usernameController.text);
+                            final encryptedPassword = await EncryptionHelper.encryptText(passwordController.text);
+
                             await DatabaseHelper().updatePassword(
                               entry.copyWith(
-                                title: titleController.text,
-                                username: usernameController.text,
-                                password: passwordController.text,
+                                title: encryptedTitle,
+                                username: encryptedUsername,
+                                password: encryptedPassword,
                               ),
                             );
                             if (context.mounted) {
@@ -1531,11 +1562,14 @@ class _HomeScreenState extends State<HomeScreen> {
                                 "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')} "
                                 "${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}";
 
+                            final encryptedTitle = await EncryptionHelper.encryptText(titleController.text);
+                            final encryptedContent = await EncryptionHelper.encryptText(contentController.text);
+
                             if (note == null) {
                               await DatabaseHelper().insertNote(
                                 Note(
-                                  title: titleController.text,
-                                  content: contentController.text,
+                                  title: encryptedTitle,
+                                  content: encryptedContent,
                                   createdAt: formattedDate,
                                 ),
                               );
@@ -1543,8 +1577,8 @@ class _HomeScreenState extends State<HomeScreen> {
                               await DatabaseHelper().updateNote(
                                 Note(
                                   id: note.id,
-                                  title: titleController.text,
-                                  content: contentController.text,
+                                  title: encryptedTitle,
+                                  content: encryptedContent,
                                   createdAt: formattedDate,
                                 ),
                               );
@@ -2723,12 +2757,16 @@ class _HomeScreenState extends State<HomeScreen> {
           final entries = await db.getPasswordsByCategory(cat.id!);
           for (final entry in entries) {
             entryCount++;
+            final decryptedTitle = await EncryptionHelper.decryptText(entry.title);
+            final decryptedUsername = await EncryptionHelper.decryptText(entry.username);
+            final decryptedPassword = await EncryptionHelper.decryptText(entry.password);
+
             rows.add(pw.TableRow(
               children: [
                 pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text(cat.name)),
-                pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text(entry.title)),
-                pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text(entry.username)),
-                pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text(entry.password)),
+                pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text(decryptedTitle.isEmpty ? entry.title : decryptedTitle)),
+                pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text(decryptedUsername.isEmpty ? entry.username : decryptedUsername)),
+                pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text(decryptedPassword.isEmpty ? entry.password : decryptedPassword)),
               ],
             ));
           }
@@ -3065,1011 +3103,4 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
   }
-}
-
-class CategoryDetailScreen extends StatefulWidget {
-  final Category category;
-  const CategoryDetailScreen({super.key, required this.category});
-
-  @override
-  State<CategoryDetailScreen> createState() => _CategoryDetailScreenState();
-}
-
-class _CategoryDetailScreenState extends State<CategoryDetailScreen> {
-  List<PasswordEntry> _entries = [];
-  bool _loading = true;
-
-  Map<String, dynamic> _getCategoryStyle(String name) {
-    final lowerName = name.toLowerCase();
-    if (lowerName.contains('mail') ||
-        lowerName.contains('gmail') ||
-        lowerName.contains('email')) {
-      return {
-        'icon': Icons.mail_outline,
-        'color': const Color(0xFFFFA79A), // Peach
-        'bgColor': const Color(0xFFFFA79A).withAlpha(20),
-      };
-    } else if (lowerName.contains('study') ||
-        lowerName.contains('school') ||
-        lowerName.contains('education') ||
-        lowerName.contains('learn')) {
-      return {
-        'icon': Icons.school_outlined,
-        'color': const Color(0xFFD4AF37), // Gold
-        'bgColor': const Color(0xFFD4AF37).withAlpha(20),
-      };
-    } else if (lowerName.contains('shop') ||
-        lowerName.contains('buy') ||
-        lowerName.contains('store') ||
-        lowerName.contains('cart')) {
-      return {
-        'icon': Icons.shopping_cart_outlined,
-        'color': const Color(0xFFA0A0A0), // Gray
-        'bgColor': const Color(0xFFA0A0A0).withAlpha(20),
-      };
-    } else if (lowerName.contains('social') ||
-        lowerName.contains('media') ||
-        lowerName.contains('network') ||
-        lowerName.contains('web')) {
-      return {
-        'icon': Icons.public,
-        'color': const Color(0xFFFFA79A), // Peach
-        'bgColor': const Color(0xFFFFA79A).withAlpha(20),
-      };
-    } else if (lowerName.contains('game') ||
-        lowerName.contains('play') ||
-        lowerName.contains('gaming')) {
-      return {
-        'icon': Icons.sports_esports_outlined,
-        'color': const Color(0xFFD4AF37), // Gold
-        'bgColor': const Color(0xFFD4AF37).withAlpha(20),
-      };
-    }
-
-    final colors = [
-      const Color(0xFFFFA79A), // Peach
-      const Color(0xFFD4AF37), // Gold
-      const Color(0xFFA0A0A0), // Gray
-    ];
-    final icons = [
-      Icons.folder_open_outlined,
-      Icons.star_outline,
-      Icons.label_outline,
-    ];
-    final hash = name.hashCode;
-    final color = colors[hash.abs() % colors.length];
-    final icon = icons[hash.abs() % icons.length];
-    return {
-      'icon': icon,
-      'color': color,
-      'bgColor': color.withAlpha(20),
-    };
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _loadEntries();
-  }
-
-  Future<void> _loadEntries() async {
-    final entries =
-        await DatabaseHelper().getPasswordsByCategory(widget.category.id!);
-    setState(() {
-      _entries = entries;
-      _loading = false;
-    });
-  }
-
-  void _showAddPasswordDialog() {
-    _showPasswordFormDialog();
-  }
-
-  void _showEditPasswordDialog(PasswordEntry entry) {
-    _showPasswordFormDialog(entry: entry);
-  }
-
-  void _showPasswordFormDialog({PasswordEntry? entry}) {
-    final titleController = TextEditingController(text: entry?.title ?? '');
-    final usernameController =
-        TextEditingController(text: entry?.username ?? '');
-    final passwordController =
-        TextEditingController(text: entry?.password ?? '');
-
-    // Dynamic ID calculation
-    final int secId = 100 + (widget.category.id ?? 7) * 13 + (entry?.id ?? 5);
-
-    showDialog(
-      context: context,
-      barrierDismissible: true,
-      builder: (context) {
-        return Dialog(
-          backgroundColor: Colors.transparent,
-          insetPadding: const EdgeInsets.symmetric(horizontal: 24),
-          child: Container(
-            decoration: BoxDecoration(
-              color: const Color(0xFF151515), // Dark gray background
-              border: Border.all(
-                  color: const Color(0xFFFFA79A), width: 1.5), // Peach border
-            ),
-            padding: const EdgeInsets.all(24.0),
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Top Title / Header Row
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'SYSTEM PROTOCOL',
-                            style: GoogleFonts.jetBrainsMono(
-                              fontSize: context.sp(10),
-                              color: const Color(0xFFFFA79A),
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            entry == null ? 'ADD PASSWORD' : 'EDIT PASSWORD',
-                            style: GoogleFonts.anton(
-                              fontSize: context.sp(26),
-                              color: Colors.white,
-                              letterSpacing: 1.5,
-                            ),
-                          ),
-                        ],
-                      ),
-                      Text(
-                        'ID: SEC_$secId',
-                        style: GoogleFonts.jetBrainsMono(
-                          fontSize: context.sp(11),
-                          color: const Color(0xFFFFA79A),
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  // Thin divider line
-                  Container(
-                    height: 1,
-                    color: const Color(0xFF333333),
-                  ),
-                  const SizedBox(height: 24),
-                  // Form Inputs
-                  LockerTextField(
-                    controller: titleController,
-                    labelText: 'Credential Name',
-                    hintText: '[ Title ]',
-                  ),
-                  const SizedBox(height: 20),
-                  LockerTextField(
-                    controller: usernameController,
-                    labelText: 'Identity Record',
-                    hintText: '[ Username/Email ]',
-                  ),
-                  const SizedBox(height: 20),
-                  LockerTextField(
-                    controller: passwordController,
-                    labelText: 'Security Key',
-                    hintText: '[ Password ]',
-                    obscureText: true,
-                  ),
-                  const SizedBox(height: 32),
-                  // Buttons Row
-                  Row(
-                    children: [
-                      // CANCEL Button
-                      Expanded(
-                        child: GestureDetector(
-                          onTap: () => Navigator.pop(context),
-                          child: Container(
-                            height: 48,
-                            decoration: BoxDecoration(
-                              color: Colors.transparent,
-                              border: Border.all(
-                                  color: const Color(0xFFFFA79A), width: 1.5),
-                            ),
-                            alignment: Alignment.center,
-                            child: Text(
-                              'CANCEL',
-                              style: GoogleFonts.jetBrainsMono(
-                                color: Colors.white,
-                                fontSize: context.sp(14),
-                                fontWeight: FontWeight.bold,
-                                letterSpacing: 1,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      // ADD / SAVE Button (with dark 3D shadow offset)
-                      Expanded(
-                        child: GestureDetector(
-                          onTap: () async {
-                            if (titleController.text.isEmpty ||
-                                usernameController.text.isEmpty ||
-                                passwordController.text.isEmpty) {
-                              return;
-                            }
-                            if (entry == null) {
-                              await DatabaseHelper().insertPassword(
-                                PasswordEntry(
-                                  categoryId: widget.category.id!,
-                                  title: titleController.text,
-                                  username: usernameController.text,
-                                  password: passwordController.text,
-                                  notes: '',
-                                  imagePath: null,
-                                ),
-                              );
-                            } else {
-                              await DatabaseHelper().updatePassword(
-                                PasswordEntry(
-                                  id: entry.id,
-                                  categoryId: widget.category.id!,
-                                  title: titleController.text,
-                                  username: usernameController.text,
-                                  password: passwordController.text,
-                                  notes: '',
-                                  imagePath: null,
-                                ),
-                              );
-                            }
-                            if (context.mounted) {
-                              Navigator.pop(context);
-                            }
-                            _loadEntries();
-                          },
-                          child: Container(
-                            height: 48,
-                            decoration: const BoxDecoration(
-                              color: Color(0xFF8B0000), // Crimson Background
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black, // Dark shifted shadow
-                                  offset: Offset(4, 4),
-                                  blurRadius: 0,
-                                ),
-                              ],
-                            ),
-                            alignment: Alignment.center,
-                            child: Text(
-                              entry == null ? 'ADD' : 'SAVE',
-                              style: GoogleFonts.jetBrainsMono(
-                                color: Colors.white,
-                                fontSize: context.sp(14),
-                                fontWeight: FontWeight.bold,
-                                letterSpacing: 1,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 24),
-                  // Footer Row
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      // Three colored blocks decoration
-                      Row(
-                        children: [
-                          Container(
-                              width: 12,
-                              height: 12,
-                              color: const Color(0xFF6E4A3B)), // Brownish
-                          const SizedBox(width: 4),
-                          Container(
-                              width: 12,
-                              height: 12,
-                              color: const Color(0xFFD4AF37)), // Goldish
-                          const SizedBox(width: 4),
-                          Container(
-                              width: 12,
-                              height: 12,
-                              color: const Color(0xFFA0A0A0)), // Grayish
-                        ],
-                      ),
-                      Text(
-                        'ENCRYPTED BY BATLOCK_KERN_V4.2',
-                        style: GoogleFonts.jetBrainsMono(
-                          fontSize: context.sp(9),
-                          color: kColorNeutral,
-                          letterSpacing: 0.8,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  void _showDeletePasswordDialog(PasswordEntry entry) {
-    showDialog(
-      context: context,
-      barrierDismissible: true,
-      builder: (context) {
-        return Dialog(
-          backgroundColor: Colors.transparent,
-          insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-          child: SingleChildScrollView(
-            child: Container(
-              decoration: BoxDecoration(
-                color: const Color(0xFF1E1E1E), // Dark gray background
-                border: Border.all(
-                    color: const Color(0xFF8B0000), width: 1.5), // Crimson border
-              ),
-              padding: const EdgeInsets.all(24.0),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Header Row
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'DELETE PASSWORD',
-                          style: GoogleFonts.anton(
-                            fontSize: context.sp(22),
-                            color: Colors.white,
-                            letterSpacing: 1.2,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'SECURITY_ALERT // 09',
-                        style: GoogleFonts.jetBrainsMono(
-                          fontSize: context.sp(9),
-                          color: Colors.redAccent,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  // Thin divider line
-                  Container(
-                    height: 1,
-                    color: const Color(0xFF333333),
-                  ),
-                  const SizedBox(height: 24),
-                  Text(
-                    'Do you really want to delete this password entry?',
-                    style: GoogleFonts.jetBrainsMono(
-                        color: Colors.white, fontSize: context.sp(14)),
-                  ),
-                  const SizedBox(height: 12),
-                  // Warning Alert Box
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: const Color(0x11FF0000), // Faint red
-                      border: Border.all(color: Colors.redAccent.withAlpha(51), width: 1),
-                    ),
-                    child: Text(
-                      'WARNING: This action is permanent and cannot be undone.',
-                      style: GoogleFonts.jetBrainsMono(
-                        fontSize: context.sp(11),
-                        color: Colors.redAccent,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 32),
-                  // Buttons Row
-                  Row(
-                    children: [
-                      // CANCEL Button
-                      Expanded(
-                        child: GestureDetector(
-                          onTap: () => Navigator.pop(context),
-                          child: Container(
-                            height: 48,
-                            decoration: BoxDecoration(
-                              color: Colors.transparent,
-                              border: Border.all(
-                                  color: const Color(0xFFFFA79A), width: 1.5),
-                            ),
-                            alignment: Alignment.center,
-                            child: Text(
-                              'CANCEL',
-                              style: GoogleFonts.jetBrainsMono(
-                                color: Colors.white,
-                                fontSize: context.sp(14),
-                                fontWeight: FontWeight.bold,
-                                letterSpacing: 1,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      // DELETE Button
-                      Expanded(
-                        child: GestureDetector(
-                          onTap: () async {
-                            await DatabaseHelper().deletePassword(entry.id!);
-                            if (context.mounted) {
-                              Navigator.pop(context);
-                            }
-                            _loadEntries();
-                          },
-                          child: Container(
-                            height: 48,
-                            decoration: const BoxDecoration(
-                              color: Color(0xFF8B0000), // Crimson Background
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black, // Dark shifted shadow
-                                  offset: Offset(4, 4),
-                                  blurRadius: 0,
-                                ),
-                              ],
-                            ),
-                            alignment: Alignment.center,
-                            child: Text(
-                              'DELETE',
-                              style: GoogleFonts.jetBrainsMono(
-                                color: Colors.white,
-                                fontSize: context.sp(14),
-                                fontWeight: FontWeight.bold,
-                                letterSpacing: 1,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildCustomFAB({required VoidCallback onTap}) {
-    const double buttonSize = 52.0;
-    const double outerSize = 64.0;
-    const Color peachColor = Color(0xFFFFA79A);
-
-    return GestureDetector(
-      onTap: onTap,
-      child: SizedBox(
-        width: outerSize,
-        height: outerSize,
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            // Top-Left corner bracket
-            Positioned(
-              top: 2,
-              left: 2,
-              child: Container(
-                width: 8,
-                height: 8,
-                decoration: const BoxDecoration(
-                  border: Border(
-                    top: BorderSide(color: peachColor, width: 1.5),
-                    left: BorderSide(color: peachColor, width: 1.5),
-                  ),
-                ),
-              ),
-            ),
-            // Bottom-Right corner bracket
-            Positioned(
-              bottom: 2,
-              right: 2,
-              child: Container(
-                width: 8,
-                height: 8,
-                decoration: const BoxDecoration(
-                  border: Border(
-                    bottom: BorderSide(color: peachColor, width: 1.5),
-                    right: BorderSide(color: peachColor, width: 1.5),
-                  ),
-                ),
-              ),
-            ),
-            // Center square button
-            Container(
-              width: buttonSize,
-              height: buttonSize,
-              decoration: BoxDecoration(
-                color: kColorPrimary,
-                border: Border.all(color: peachColor, width: 1.5),
-              ),
-              child: const Icon(
-                Icons.add,
-                color: peachColor,
-                size: 24,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('BATLOCKER'),
-        automaticallyImplyLeading: true,
-      ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator(color: kColorPrimary))
-          : Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    widget.category.name,
-                    style: GoogleFonts.anton(
-                      fontSize: 24,
-                      color: Colors.white,
-                      letterSpacing: 1.2,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-
-                  Expanded(
-                    child: _entries.isEmpty
-                        ? Center(
-                            child: Text(
-                              'No passwords yet. Tap edit to add one.',
-                              style: GoogleFonts.jetBrainsMono(
-                                  fontSize: 16, color: kColorNeutral),
-                            ),
-                          )
-                        : ListView.builder(
-                            itemCount: _entries.length,
-                            itemBuilder: (context, index) {
-                              final entry = _entries[index];
-                              // Resolve color dynamically based on category styling
-                              final style = _getCategoryStyle(widget.category.name);
-                              final Color catColor = style['color'] as Color;
-                              final IconData catIcon = style['icon'] as IconData;
-
-                              return PasswordEntryCard(
-                                entry: entry,
-                                categoryColor: catColor,
-                                categoryIcon: catIcon,
-                                onEdit: () => _showEditPasswordDialog(entry),
-                                onDelete: () => _showDeletePasswordDialog(entry),
-                                onToggleFavorite: () async {
-                                  if (entry.id != null) {
-                                    await DatabaseHelper().toggleFavoritePassword(entry.id!, !entry.isFavorite);
-                                    _loadEntries();
-                                  }
-                                },
-                              );
-                            },
-                          ),
-                  ),
-                ],
-              ),
-            ),
-      floatingActionButton: Padding(
-        padding: const EdgeInsets.only(right: 12.0, bottom: 12.0),
-        child: _buildCustomFAB(onTap: _showAddPasswordDialog),
-      ),
-    );
-  }
-}
-
-class PasswordEntryCard extends StatefulWidget {
-  final PasswordEntry entry;
-  final Color categoryColor;
-  final IconData categoryIcon;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
-  final VoidCallback onToggleFavorite;
-
-  const PasswordEntryCard({
-    super.key,
-    required this.entry,
-    required this.categoryColor,
-    required this.categoryIcon,
-    required this.onEdit,
-    required this.onDelete,
-    required this.onToggleFavorite,
-  });
-
-  @override
-  State<PasswordEntryCard> createState() => _PasswordEntryCardState();
-}
-
-class _PasswordEntryCardState extends State<PasswordEntryCard> {
-  bool _obscurePassword = true;
-
-  String _getPasswordEntryId(PasswordEntry entry) {
-    final String cleanTitle = entry.title.replaceAll(RegExp(r'[^a-zA-Z]'), '');
-    String prefix = 'SEC';
-    if (cleanTitle.length >= 4) {
-      prefix = cleanTitle.substring(0, 4).toUpperCase();
-    } else if (cleanTitle.isNotEmpty) {
-      prefix = cleanTitle.padRight(4, 'X').toUpperCase();
-    }
-    final int idVal = entry.id ?? 9;
-    final int codeNum = 8000 + idVal * 113 + (entry.categoryId * 23) % 1000;
-    return '$prefix-$codeNum';
-  }
-
-  void _copyToClipboard(String text, String label) {
-    Clipboard.setData(ClipboardData(text: text));
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: const Color(0xFF1E1E1E),
-        content: Text(
-          '[ SYSTEM: $label COPIED TO CLINICAL RECORD ]',
-          style: GoogleFonts.jetBrainsMono(
-            color: widget.categoryColor,
-            fontWeight: FontWeight.bold,
-            fontSize: 12,
-          ),
-        ),
-        duration: const Duration(seconds: 2),
-        behavior: SnackBarBehavior.floating,
-        shape: Border.all(color: widget.categoryColor, width: 1),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final String entryId = _getPasswordEntryId(widget.entry);
-
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 8),
-      decoration: BoxDecoration(
-        color: const Color(0xFF151515), // Dark background matching screenshot
-        border: Border.all(color: kColorPrimary, width: 1),
-      ),
-      child: Stack(
-        children: [
-          // Top-Left corner bracket
-          Positioned(
-            top: 0,
-            left: 0,
-            child: Container(
-              width: 6,
-              height: 6,
-              decoration: const BoxDecoration(
-                border: Border(
-                  top: BorderSide(color: kColorPrimary, width: 1.5),
-                  left: BorderSide(color: kColorPrimary, width: 1.5),
-                ),
-              ),
-            ),
-          ),
-          // Bottom-Right corner bracket
-          Positioned(
-            bottom: 0,
-            right: 0,
-            child: Container(
-              width: 6,
-              height: 6,
-              decoration: const BoxDecoration(
-                border: Border(
-                  bottom: BorderSide(color: kColorPrimary, width: 1.5),
-                  right: BorderSide(color: kColorPrimary, width: 1.5),
-                ),
-              ),
-            ),
-          ),
-          // Content
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Top row: Icon, Title, ID, and Edit/Delete Actions
-                Row(
-                  children: [
-                    // Icon Container
-                    Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                        color: widget.categoryColor.withAlpha(20),
-                        border: Border.all(color: widget.categoryColor.withAlpha(51), width: 1),
-                      ),
-                      alignment: Alignment.center,
-                      child: Icon(
-                        widget.categoryIcon,
-                        color: widget.categoryColor,
-                        size: 20,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    // Title and ID
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            widget.entry.title,
-                            style: GoogleFonts.jetBrainsMono(
-                              color: Colors.white,
-                              fontSize: context.sp(15),
-                              fontWeight: FontWeight.bold,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            'ID: $entryId',
-                            style: GoogleFonts.jetBrainsMono(
-                              color: widget.categoryColor,
-                              fontSize: context.sp(10),
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    // Action Button (3-dots Popup Menu)
-                    PopupMenuButton<String>(
-                      icon: const Icon(Icons.more_vert, color: Colors.white70, size: 22),
-                      color: const Color(0xFF1E1E1E), // Dark theme background
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                      onSelected: (value) {
-                        if (value == 'edit') {
-                          widget.onEdit();
-                        } else if (value == 'favorite') {
-                          widget.onToggleFavorite();
-                        } else if (value == 'delete') {
-                          widget.onDelete();
-                        }
-                      },
-                      itemBuilder: (context) => [
-                        PopupMenuItem<String>(
-                          value: 'edit',
-                          child: Row(
-                            children: [
-                              const Icon(Icons.edit_outlined, color: Colors.white70, size: 18),
-                              const SizedBox(width: 8),
-                              Text(
-                                'EDIT',
-                                style: GoogleFonts.jetBrainsMono(
-                                  color: Colors.white,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        PopupMenuItem<String>(
-                          value: 'favorite',
-                          child: Row(
-                            children: [
-                              Icon(
-                                widget.entry.isFavorite ? Icons.star : Icons.star_border,
-                                color: const Color(0xFFD4AF37), // Gold star
-                                size: 18,
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                widget.entry.isFavorite ? 'UNFAVOURITE' : 'FAVOURITE',
-                                style: GoogleFonts.jetBrainsMono(
-                                  color: Colors.white,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        PopupMenuItem<String>(
-                          value: 'delete',
-                          child: Row(
-                            children: [
-                              const Icon(Icons.delete_outline, color: Colors.redAccent, size: 18),
-                              const SizedBox(width: 8),
-                              Text(
-                                'DELETE',
-                                style: GoogleFonts.jetBrainsMono(
-                                  color: Colors.redAccent,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-
-                // Username Row
-                Row(
-                  children: [
-                    Text(
-                      'Username:',
-                      style: GoogleFonts.jetBrainsMono(
-                        color: Colors.white70,
-                        fontSize: context.sp(13),
-                      ),
-                    ),
-                    const Spacer(),
-                    Expanded(
-                      child: Align(
-                        alignment: Alignment.centerRight,
-                        child: SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: Text(
-                            widget.entry.username,
-                            style: GoogleFonts.jetBrainsMono(
-                              color: Colors.white,
-                              fontSize: context.sp(13),
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    GestureDetector(
-                      onTap: () => _copyToClipboard(widget.entry.username, 'IDENTITY_RECORD'),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: widget.categoryColor.withAlpha(20),
-                          border: Border.all(color: widget.categoryColor.withAlpha(102), width: 1),
-                        ),
-                        child: Text(
-                          'COPY',
-                          style: GoogleFonts.jetBrainsMono(
-                            color: widget.categoryColor,
-                            fontSize: context.sp(9),
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-
-                // Password Row
-                Row(
-                  children: [
-                    Text(
-                      'Password:',
-                      style: GoogleFonts.jetBrainsMono(
-                        color: Colors.white70,
-                        fontSize: context.sp(13),
-                      ),
-                    ),
-                    const Spacer(),
-                    if (_obscurePassword)
-                      // Segmented Squares Password Mask
-                      Row(
-                        children: List.generate(
-                          6,
-                          (index) => Container(
-                            width: 12,
-                            height: 12,
-                            margin: const EdgeInsets.symmetric(horizontal: 2),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFCCCCCC),
-                              border: Border.all(color: Colors.white70, width: 1),
-                            ),
-                          ),
-                        ),
-                      )
-                    else
-                      Expanded(
-                        child: Align(
-                          alignment: Alignment.centerRight,
-                          child: SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: Text(
-                              widget.entry.password,
-                              style: GoogleFonts.jetBrainsMono(
-                                color: Colors.white,
-                                fontSize: context.sp(13),
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    const SizedBox(width: 12),
-                    GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          _obscurePassword = !_obscurePassword;
-                        });
-                      },
-                      child: Icon(
-                        _obscurePassword ? Icons.visibility_outlined : Icons.visibility_off_outlined,
-                        color: kColorPrimary,
-                        size: 20,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    GestureDetector(
-                      onTap: () => _copyToClipboard(widget.entry.password, 'SECURITY_KEY'),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: widget.categoryColor.withAlpha(20),
-                          border: Border.all(color: widget.categoryColor.withAlpha(102), width: 1),
-                        ),
-                        child: Text(
-                          'COPY',
-                          style: GoogleFonts.jetBrainsMono(
-                            color: widget.categoryColor,
-                            fontSize: context.sp(9),
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class GridBackgroundPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = const Color(0x0CFF0000) // Extremely faint red lines for grid effect
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.0;
-
-    const double step = 24.0;
-
-    // Draw vertical lines
-    for (double x = 0; x < size.width; x += step) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
-    }
-
-    // Draw horizontal lines
-    for (double y = 0; y < size.height; y += step) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

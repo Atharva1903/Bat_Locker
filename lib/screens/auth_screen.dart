@@ -1,8 +1,13 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../db/database_helper.dart';
+import '../utils/encryption_helper.dart';
+import '../utils/session_manager.dart';
 import '../utils/theme.dart';
 import '../utils/responsive.dart';
+import '../widgets/grid_background_painter.dart';
 import 'home_screen.dart';
 
 class AuthScreen extends StatefulWidget {
@@ -28,20 +33,66 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   Future<void> _checkMasterPassword() async {
-    String? storedPassword = await secureStorage.read(key: 'master_password');
+    final hasVault = await DatabaseHelper().hasVaultMetadata();
+    final storedLegacy = await secureStorage.read(key: 'master_password');
     setState(() {
-      _hasMasterPassword = storedPassword != null;
+      _hasMasterPassword = hasVault || (storedLegacy != null);
     });
   }
 
   Future<void> _checkPassword() async {
     setState(() { _isAuthenticating = true; _error = null; });
-    String? storedPassword = await secureStorage.read(key: 'master_password');
-    if (storedPassword == _passwordController.text) {
-      _onAuthenticated();
-    } else {
+    try {
+      final enteredPassword = _passwordController.text;
+      final hasVault = await DatabaseHelper().hasVaultMetadata();
+      final storedLegacy = await secureStorage.read(key: 'master_password');
+
+      if (hasVault) {
+        final metadata = await DatabaseHelper().getVaultMetadata();
+        if (metadata != null) {
+          final saltBytes = base64.decode(metadata['salt']!);
+          final derivedKey = await EncryptionHelper.deriveKey(enteredPassword, saltBytes);
+          final verificationString = await EncryptionHelper.decryptWithKey(metadata['verification_box']!, derivedKey);
+          
+          if (verificationString == 'batlocker_vault_verified') {
+            SessionManager().setVaultKey(derivedKey);
+            _onAuthenticated();
+            return;
+          }
+        }
+        setState(() {
+          _error = 'Incorrect password';
+          _isAuthenticating = false;
+        });
+      } else if (storedLegacy != null) {
+        // Legacy User Migration Flow
+        if (storedLegacy == enteredPassword) {
+          final saltBytes = EncryptionHelper.generateRandomSalt();
+          final derivedKey = await EncryptionHelper.deriveKey(enteredPassword, saltBytes);
+          
+          // Perform full database decryption/encryption upgrade
+          await DatabaseHelper().migrateToZeroKnowledge(enteredPassword, derivedKey, saltBytes);
+          
+          // Remove plaintext password from device forever
+          await secureStorage.delete(key: 'master_password');
+          
+          SessionManager().setVaultKey(derivedKey);
+          _onAuthenticated();
+        } else {
+          setState(() {
+            _error = 'Incorrect password';
+            _isAuthenticating = false;
+          });
+        }
+      } else {
+        setState(() {
+          _error = 'Vault not initialized';
+          _isAuthenticating = false;
+        });
+      }
+    } catch (e) {
       setState(() {
-        _error = 'Incorrect password';
+        _error = 'Authentication failed: $e';
         _isAuthenticating = false;
       });
     }
@@ -63,13 +114,28 @@ class _AuthScreenState extends State<AuthScreen> {
       });
       return;
     }
-    await secureStorage.write(key: 'master_password', value: _newPasswordController.text);
-    setState(() {
-      _hasMasterPassword = true;
-      _isAuthenticating = false;
-      _error = null;
-    });
-    _onAuthenticated();
+
+    try {
+      final enteredPassword = _newPasswordController.text;
+      final saltBytes = EncryptionHelper.generateRandomSalt();
+      final derivedKey = await EncryptionHelper.deriveKey(enteredPassword, saltBytes);
+      final verificationBox = await EncryptionHelper.encryptWithKey('batlocker_vault_verified', derivedKey);
+
+      await DatabaseHelper().saveVaultMetadata(base64.encode(saltBytes), verificationBox);
+      SessionManager().setVaultKey(derivedKey);
+
+      setState(() {
+        _hasMasterPassword = true;
+        _isAuthenticating = false;
+        _error = null;
+      });
+      _onAuthenticated();
+    } catch (e) {
+      setState(() {
+        _error = 'Vault initialization failed: $e';
+        _isAuthenticating = false;
+      });
+    }
   }
 
   void _onAuthenticated() {
@@ -355,28 +421,4 @@ class _AuthScreenState extends State<AuthScreen> {
     );
   }
 }
-
-class GridBackgroundPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = const Color(0x0CFF0000) // Extremely faint red lines for grid effect
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.0;
-
-    const double step = 24.0;
-
-    // Draw vertical lines
-    for (double x = 0; x < size.width; x += step) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
-    }
-
-    // Draw horizontal lines
-    for (double y = 0; y < size.height; y += step) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-} 
+ 

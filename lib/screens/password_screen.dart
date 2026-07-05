@@ -27,8 +27,21 @@ class _PasswordScreenState extends State<PasswordScreen> {
 
   Future<void> _loadEntries() async {
     final entries = await DatabaseHelper().getPasswordsByCategory(widget.categoryId);
+    final decryptedEntries = <PasswordEntry>[];
+    for (final entry in entries) {
+      final decryptedTitle = await EncryptionHelper.decryptText(entry.title);
+      final decryptedUsername = await EncryptionHelper.decryptText(entry.username);
+      final decryptedPassword = await EncryptionHelper.decryptText(entry.password);
+      final decryptedNotes = await EncryptionHelper.decryptText(entry.notes ?? '');
+      decryptedEntries.add(entry.copyWith(
+        title: decryptedTitle.isEmpty ? entry.title : decryptedTitle,
+        username: decryptedUsername.isEmpty ? entry.username : decryptedUsername,
+        password: decryptedPassword.isEmpty ? entry.password : decryptedPassword,
+        notes: decryptedNotes,
+      ));
+    }
     setState(() {
-      _entries = entries;
+      _entries = decryptedEntries;
       _loading = false;
     });
   }
@@ -36,7 +49,7 @@ class _PasswordScreenState extends State<PasswordScreen> {
   void _showPasswordDialog({PasswordEntry? entry}) {
     final titleController = TextEditingController(text: entry?.title ?? '');
     final usernameController = TextEditingController(text: entry?.username ?? '');
-    final passwordController = TextEditingController(text: entry == null ? '' : EncryptionHelper.decryptText(entry.password));
+    final passwordController = TextEditingController(text: entry?.password ?? '');
     final notesController = TextEditingController(text: entry?.notes ?? '');
     String? imagePath = entry?.imagePath;
     showDialog(
@@ -86,14 +99,20 @@ class _PasswordScreenState extends State<PasswordScreen> {
           ElevatedButton(
             onPressed: () async {
               if (titleController.text.isEmpty || usernameController.text.isEmpty || passwordController.text.isEmpty) return;
+
+              final encryptedTitle = await EncryptionHelper.encryptText(titleController.text);
+              final encryptedUsername = await EncryptionHelper.encryptText(usernameController.text);
+              final encryptedPassword = await EncryptionHelper.encryptText(passwordController.text);
+              final encryptedNotes = await EncryptionHelper.encryptText(notesController.text);
+
               if (entry == null) {
                 await DatabaseHelper().insertPassword(
                   PasswordEntry(
                     categoryId: widget.categoryId,
-                    title: titleController.text,
-                    username: usernameController.text,
-                    password: EncryptionHelper.encryptText(passwordController.text),
-                    notes: notesController.text,
+                    title: encryptedTitle,
+                    username: encryptedUsername,
+                    password: encryptedPassword,
+                    notes: encryptedNotes,
                     imagePath: imagePath,
                   ),
                 );
@@ -102,10 +121,10 @@ class _PasswordScreenState extends State<PasswordScreen> {
                   PasswordEntry(
                     id: entry.id,
                     categoryId: widget.categoryId,
-                    title: titleController.text,
-                    username: usernameController.text,
-                    password: EncryptionHelper.encryptText(passwordController.text),
-                    notes: notesController.text,
+                    title: encryptedTitle,
+                    username: encryptedUsername,
+                    password: encryptedPassword,
+                    notes: encryptedNotes,
                     imagePath: imagePath,
                   ),
                 );
