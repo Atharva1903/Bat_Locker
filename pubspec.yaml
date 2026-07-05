@@ -35,6 +35,7 @@ flutter:
   assets:
     - assets/images/bat_logo.png
     - assets/icons/
+    - assets/google_fonts/
   fonts:
     - family: Impact
       fonts:
@@ -47,8 +48,8 @@ flutter_native_splash:
   ios: true
   web: false
 
-flutter_icons:
+flutter_launcher_icons:
   android: true
   ios: false
-  image_path: "assets/images/bat_logo.png"
+  image_path: "assets/images/app_icon.png"
   background_color: "#0B0B0B"
