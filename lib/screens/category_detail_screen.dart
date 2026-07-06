@@ -281,14 +281,10 @@ class _CategoryDetailScreenState extends State<CategoryDetailScreen> {
                               );
                             } else {
                               await DatabaseHelper().updatePassword(
-                                PasswordEntry(
-                                  id: entry.id,
-                                  categoryId: widget.category.id!,
+                                entry.copyWith(
                                   title: encryptedTitle,
                                   username: encryptedUsername,
                                   password: encryptedPassword,
-                                  notes: '',
-                                  imagePath: null,
                                 ),
                               );
                             }

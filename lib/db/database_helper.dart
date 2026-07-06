@@ -132,8 +132,11 @@ class DatabaseHelper {
       final plainUsername = map['username'] as String;
       final plainNotes = map['notes'] as String? ?? '';
 
-      // Decrypt legacy password using the hardcoded key
-      final plainPassword = EncryptionHelper.decryptLegacy(legacyEncryptedPassword);
+      // Decrypt legacy password using the hardcoded key (or fall back to plaintext)
+      String plainPassword = EncryptionHelper.decryptLegacy(legacyEncryptedPassword);
+      if (plainPassword.isEmpty && legacyEncryptedPassword.isNotEmpty) {
+        plainPassword = legacyEncryptedPassword;
+      }
 
       // Encrypt all fields using new Dynamic AES-256-GCM Key
       final encryptedTitle = await EncryptionHelper.encryptWithKey(plainTitle, newKey);
