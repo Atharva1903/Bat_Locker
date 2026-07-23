@@ -1,7 +1,10 @@
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:local_auth/local_auth.dart';
+import 'package:cryptography/cryptography.dart';
 import '../db/database_helper.dart';
 import '../utils/encryption_helper.dart';
 import '../utils/session_manager.dart';
@@ -22,14 +25,69 @@ class _AuthScreenState extends State<AuthScreen> {
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _newPasswordController = TextEditingController();
   final TextEditingController _confirmPasswordController = TextEditingController();
+  final LocalAuthentication _localAuth = LocalAuthentication();
+
   bool _isAuthenticating = false;
   String? _error;
   bool _hasMasterPassword = false;
+  bool _biometricEnabled = false;
+  bool _isBiometricAvailable = false;
 
   @override
   void initState() {
     super.initState();
-    _checkMasterPassword();
+    _initAuth();
+  }
+
+  /// Chains master password check → biometric status check → optional auto-prompt.
+  Future<void> _initAuth() async {
+    await _checkMasterPassword();
+    await _checkBiometricStatus();
+  }
+
+  Future<void> _checkBiometricStatus() async {
+    final flag = await secureStorage.read(key: 'biometric_enabled');
+    final enabled = flag == 'true';
+    final canCheck = await _localAuth.canCheckBiometrics;
+    final isSupported = await _localAuth.isDeviceSupported();
+    final available = canCheck && isSupported;
+
+    if (mounted) {
+      setState(() {
+        _biometricEnabled = enabled;
+        _isBiometricAvailable = available;
+      });
+    }
+
+    // Auto-prompt if biometrics are enabled and the vault exists
+    if (enabled && available && _hasMasterPassword && mounted) {
+      // Small delay so the unlock screen renders before the OS dialog appears
+      await Future.delayed(const Duration(milliseconds: 400));
+      if (mounted) _authenticateWithBiometrics();
+    }
+  }
+
+  Future<void> _authenticateWithBiometrics() async {
+    try {
+      final authenticated = await _localAuth.authenticate(
+        localizedReason: 'Unlock BatLocker with your fingerprint',
+        biometricOnly: false,      // allow device PIN as OS fallback
+        persistAcrossBackgrounding: true,
+      );
+      if (!authenticated || !mounted) return;
+
+      final keyBase64 = await secureStorage.read(key: 'biometric_vault_key');
+      if (keyBase64 == null) {
+        // Stored key missing — fall through to password form
+        return;
+      }
+      final keyBytes = base64.decode(keyBase64);
+      final secretKey = SecretKey(keyBytes);
+      SessionManager().setVaultKey(secretKey);
+      _onAuthenticated();
+    } catch (_) {
+      // Any error (e.g. biometrics not ready) — fall through to password form silently
+    }
   }
 
   Future<void> _checkMasterPassword() async {
@@ -371,6 +429,36 @@ class _AuthScreenState extends State<AuthScreen> {
           text: 'UNLOCK',
           onPressed: _isAuthenticating ? null : _checkPassword,
         ),
+        if (_biometricEnabled && _isBiometricAvailable) ...([
+          SizedBox(height: context.hp(2)),
+          GestureDetector(
+            onTap: _isAuthenticating ? null : _authenticateWithBiometrics,
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              decoration: BoxDecoration(
+                color: Colors.transparent,
+                border: Border.all(color: const Color(0xFFFFA79A), width: 1),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.fingerprint, color: Color(0xFFFFA79A), size: 20),
+                  const SizedBox(width: 10),
+                  Text(
+                    'USE BIOMETRIC',
+                    style: GoogleFonts.jetBrainsMono(
+                      color: const Color(0xFFFFA79A),
+                      fontSize: context.sp(13),
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1.5,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ]),
         _buildErrorPanel(context),
       ],
     );

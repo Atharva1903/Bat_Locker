@@ -1,10 +1,12 @@
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:local_auth/local_auth.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:path_provider/path_provider.dart';
-import 'dart:io';
 import 'auth_screen.dart';
 import '../db/database_helper.dart';
 import '../models/category.dart';
@@ -13,6 +15,7 @@ import '../models/note.dart';
 import '../utils/theme.dart';
 import '../utils/responsive.dart';
 import '../utils/encryption_helper.dart';
+import '../utils/session_manager.dart';
 import '../widgets/grid_background_painter.dart';
 import '../widgets/password_entry_card.dart';
 import 'category_detail_screen.dart';
@@ -34,12 +37,23 @@ class _HomeScreenState extends State<HomeScreen> {
   List<PasswordEntry> _favoriteEntries = [];
   int? _selectedFavoriteCategoryId;
 
+  final LocalAuthentication _localAuth = LocalAuthentication();
+  final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
+
   @override
   void initState() {
     super.initState();
     _loadCategories();
     _loadNotes();
     _loadFavorites();
+    _loadBiometricStatus();
+  }
+
+  Future<void> _loadBiometricStatus() async {
+    final val = await _secureStorage.read(key: 'biometric_enabled');
+    if (mounted) {
+      setState(() { _biometricEnabled = val == 'true'; });
+    }
   }
 
   Future<void> _loadCategories() async {
@@ -2238,10 +2252,63 @@ class _HomeScreenState extends State<HomeScreen> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          _biometricEnabled = !_biometricEnabled;
-                        });
+                      onTap: () async {
+                        if (_biometricEnabled) {
+                          // DISABLE: remove stored key and flag
+                          await _secureStorage.delete(key: 'biometric_vault_key');
+                          await _secureStorage.write(key: 'biometric_enabled', value: 'false');
+                          if (mounted) setState(() { _biometricEnabled = false; });
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                              backgroundColor: const Color(0xFF1E1E1E),
+                              content: Text('[ BIOMETRIC UNLOCK DISABLED ]',
+                                style: GoogleFonts.jetBrainsMono(color: kColorPrimary, fontWeight: FontWeight.bold)),
+                              shape: Border.all(color: kColorPrimary),
+                              behavior: SnackBarBehavior.floating,
+                            ));
+                          }
+                        } else {
+                          // ENABLE: verify device supports biometrics
+                          final canCheck = await _localAuth.canCheckBiometrics;
+                          final isSupported = await _localAuth.isDeviceSupported();
+                          if (!canCheck || !isSupported) {
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                                backgroundColor: const Color(0xFF1E1E1E),
+                                content: Text('[ NO BIOMETRICS ENROLLED ON THIS DEVICE ]',
+                                  style: GoogleFonts.jetBrainsMono(color: kColorPrimary, fontWeight: FontWeight.bold)),
+                                shape: Border.all(color: kColorPrimary),
+                                behavior: SnackBarBehavior.floating,
+                              ));
+                            }
+                            return;
+                          }
+                          // Prompt biometrics to confirm intent
+                          final ok = await _localAuth.authenticate(
+                            localizedReason: 'Confirm fingerprint to enable biometric unlock',
+                            persistAcrossBackgrounding: true,
+                          );
+                          if (!ok) return;
+                          // Store vault key bytes in secure storage
+                          final vaultKey = SessionManager().vaultKey;
+                          if (vaultKey == null) return;
+                          final keyBytes = await vaultKey.extractBytes();
+                          await _secureStorage.write(
+                            key: 'biometric_vault_key',
+                            value: base64.encode(keyBytes),
+                          );
+                          await _secureStorage.write(key: 'biometric_enabled', value: 'true');
+                          if (mounted) setState(() { _biometricEnabled = true; });
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                              backgroundColor: const Color(0xFF0D1F0D),
+                              content: Text('[ BIOMETRIC UNLOCK ENABLED ]',
+                                style: GoogleFonts.jetBrainsMono(color: const Color(0xFF66FF66), fontWeight: FontWeight.bold)),
+                              shape: Border.all(color: const Color(0xFF66FF66)),
+                              behavior: SnackBarBehavior.floating,
+                            ));
+                          }
+                        }
                       },
                       child: Container(
                         width: 24,
@@ -2297,28 +2364,14 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               const SizedBox(height: 12),
 
-              // Side-by-side Backup row
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildSquareActionCard(
-                      label: 'EXPORT_BACKUP',
-                      icon: Icons.file_upload_outlined,
-                      onTap: _exportPasswordsToPDF,
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: _buildSquareActionCard(
-                      label: 'IMPORT_BACKUP',
-                      icon: Icons.file_download_outlined,
-                      onTap: () {
-                        // Do nothing for now
-                      },
-                    ),
-                  ),
-                ],
+              // Full-width Export Backup button
+              _buildSquareActionCard(
+                label: 'EXPORT_BACKUP',
+                icon: Icons.file_upload_outlined,
+                onTap: _exportPasswordsToPDF,
+                fullWidth: true,
               ),
+
               const SizedBox(height: 24),
 
               // Wipe all data button
@@ -2464,8 +2517,9 @@ class _HomeScreenState extends State<HomeScreen> {
     required String label,
     required IconData icon,
     required VoidCallback onTap,
+    bool fullWidth = false,
   }) {
-    return GestureDetector(
+    final card = GestureDetector(
       onTap: onTap,
       child: Container(
         constraints: const BoxConstraints(minHeight: 100),
@@ -2532,6 +2586,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
     );
+    return fullWidth ? SizedBox(width: double.infinity, child: card) : card;
   }
 
   void _showChangeMasterPasswordDialog() {
@@ -2684,6 +2739,20 @@ class _HomeScreenState extends State<HomeScreen> {
 
                             await secureStorage.write(key: 'master_password', value: newText);
 
+                            // If biometrics are enabled, refresh the stored vault key
+                            // so biometric unlock still works after the password change.
+                            final biometricFlag = await secureStorage.read(key: 'biometric_enabled');
+                            if (biometricFlag == 'true') {
+                              final vaultKey = SessionManager().vaultKey;
+                              if (vaultKey != null) {
+                                final keyBytes = await vaultKey.extractBytes();
+                                await secureStorage.write(
+                                  key: 'biometric_vault_key',
+                                  value: base64.encode(keyBytes),
+                                );
+                              }
+                            }
+
                             if (context.mounted) {
                               Navigator.pop(context);
                               ScaffoldMessenger.of(context).showSnackBar(
@@ -2817,11 +2886,30 @@ class _HomeScreenState extends State<HomeScreen> {
           downloadsPath = "${home.replaceAll('\\', '/')}/Downloads";
         }
       } else if (Platform.isAndroid) {
+        // getExternalStorageDirectory() returns the app-private path, e.g.:
+        //   /storage/emulated/0/Android/data/com.example.bat_locker/files
+        // We strip the "/Android/data/..." suffix to get the storage root,
+        // then append "/Download" to reach the public Downloads folder that
+        // is visible to the user in the Files app. This approach is
+        // device-agnostic and works on both real devices and emulators.
         final Directory? extDir = await getExternalStorageDirectory();
         if (extDir != null) {
-          downloadsPath = extDir.path;
+          String storagePath = extDir.path;
+          final androidSuffixIndex = storagePath.indexOf('/Android/data/');
+          if (androidSuffixIndex != -1) {
+            storagePath = storagePath.substring(0, androidSuffixIndex);
+          }
+          final publicDownloads = '$storagePath/Download';
+          // Create the directory if it doesn't exist (edge case)
+          final downloadsDir = Directory(publicDownloads);
+          if (!await downloadsDir.exists()) {
+            await downloadsDir.create(recursive: true);
+          }
+          downloadsPath = publicDownloads;
         }
       }
+
+
 
       if (downloadsPath == null) {
         final Directory appDocDir = await getApplicationDocumentsDirectory();
@@ -2832,79 +2920,46 @@ class _HomeScreenState extends State<HomeScreen> {
       final file = File(filePath);
       await file.writeAsBytes(await pdf.save());
 
-      if (mounted) {
-        showDialog(
-          context: context,
-          builder: (context) {
-            return Dialog(
-              backgroundColor: Colors.transparent,
-              child: Container(
-                decoration: BoxDecoration(
-                  color: const Color(0xFF151515),
-                  border: Border.all(color: const Color(0xFFFFA79A), width: 1.5),
-                ),
-                padding: const EdgeInsets.all(24.0),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'BACKUP COMPLETED',
-                      style: GoogleFonts.anton(
-                        fontSize: 22,
-                        color: Colors.white,
-                        letterSpacing: 1.2,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Container(height: 1, color: const Color(0xFF333333)),
-                    const SizedBox(height: 16),
-                    Text(
-                      'PDF backup successfully compiled and written to local record system:',
-                      style: GoogleFonts.jetBrainsMono(color: Colors.white70, fontSize: 13),
-                    ),
-                    const SizedBox(height: 12),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      color: Colors.black,
-                      width: double.infinity,
-                      child: SelectableText(
-                        filePath,
-                        style: GoogleFonts.jetBrainsMono(
-                          color: const Color(0xFFFFA79A),
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: GestureDetector(
-                        onTap: () => Navigator.pop(context),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                          decoration: const BoxDecoration(
-                            color: Color(0xFF8B0000),
-                          ),
-                          child: Text(
-                            'CONFIRM',
-                            style: GoogleFonts.jetBrainsMono(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 13,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+      // Verify the file actually landed on disk before confirming success
+      final bool savedOk = await file.exists();
+
+      if (!mounted) return;
+
+      if (savedOk) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFF0D1F0D),
+            content: Text(
+              '[ EXPORT SUCCESS: SAVED TO DOWNLOADS ]',
+              style: GoogleFonts.jetBrainsMono(
+                color: const Color(0xFF66FF66),
+                fontWeight: FontWeight.bold,
               ),
-            );
-          },
+            ),
+            shape: Border.all(color: const Color(0xFF66FF66)),
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: const Color(0xFF1E1E1E),
+            content: Text(
+              '[ EXPORT FAILED: COULD NOT SAVE FILE ]',
+              style: GoogleFonts.jetBrainsMono(
+                color: kColorPrimary,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            shape: Border.all(color: kColorPrimary),
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 4),
+          ),
         );
       }
+
+
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

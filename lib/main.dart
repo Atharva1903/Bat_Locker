@@ -6,6 +6,12 @@ import 'utils/theme.dart';
 import 'utils/responsive.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Force google_fonts to use the locally-bundled TTF files in
+  // assets/google_fonts/ instead of fetching from the internet at runtime.
+  // Without this, the package silently falls back to the system default font
+  // on devices without internet or when the CDN request fails.
+  GoogleFonts.config.allowRuntimeFetching = false;
   runApp(const MyAppWrapper());
 }
 
